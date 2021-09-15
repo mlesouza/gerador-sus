@@ -24,6 +24,9 @@ import XLSX from 'xlsx';
 import UploadTemplate from '../../templates/Upload';
 import { ButtonContainer, FilteredButtons, TableWrapper } from './styled';
 import csv from '../../services/csv';
+import Parser from 'node-dbf';
+import { parse } from 'path';
+import Item from 'antd/lib/list/Item';
 
 const { Dragger } = Upload;
 const { Option } = Select;
@@ -36,11 +39,13 @@ interface ColumnsProps {
 
 const UploadPage: React.FC = () => {
   const [file, setFile] = useState<XLSX.WorkSheet>({});
+  const [fileHeader, setFileHeader] = useState([]);
+  const [fileBody, setFileBody] = useState([]);
   const [csvFile, setCsvFile] = useState('');
   const [loading, setLoading] = useState(false);
   const [filtredLoading, setFiltredLoading] = useState(false);
 
-  const [showTable, setShowTable] = useState(false);
+  const [showTable, setShowTable] = useState(true);
   const [columnsTable, setColumnsTable] = useState<ColumnsProps[]>([]);
   const [columnsTableFiltred, setColumnsTableFiltred] = useState<
     ColumnsProps[]
@@ -52,24 +57,64 @@ const UploadPage: React.FC = () => {
 
   const draggerProps = {
     multiple: false,
-    accept: '.dbf, .dbc',
+    accept: '.dbf',
     progress: { strokeWidth: 2, showInfo: true },
     onChange(info: any) {
       const { status } = info.file;
       setLoading(true);
+      console.log('Iniciou');
       if (status === 'done') {
-        const work = XLSX.readFile(info.file.originFileObj.path).Sheets;
-        setFile(work.Sheet1);
-        setCsvFile(XLSX.utils.sheet_to_csv(work.Sheet1));
-        setLoading(false);
-        message.success(`${info.file.name} carregado com sucesso.`);
-        gerarTabela(work.Sheet1);
-        gerarSelecaoDeColunas(work.Sheet1);
+        let parser = new Parser(info.file.originFileObj.path);
+        let headers: any = [];
+        let body: any = [];
+
+        parser.on('start', (p: any) => {
+          console.log('dBase file parsing has started');
+        });
+
+        parser.on('header', (h: any) => {
+          h.fields.map((item: any) => {
+            headers.push(item.name);
+          });
+        });
+
+        parser.on('record', (record: any) => {
+          body.push(record);
+        });
+
+        parser.on('end', (p: any) => {
+          setFileHeader(headers);
+          setFileBody(body);
+          gerarTabela(headers, body);
+          gerarSelecaoDeColunas(headers);
+          setLoading(false);
+        });
+        console.log(parser.parse());
+
+        // const readable = createReadStream(info.file.originFileObj.path);
+        // let buffers: any = [];
+        // readable.on('data', function (data) {
+        //   buffers.push(data);
+        // });
+        // readable.on('end', () => {
+        //   let buffer = Buffer.concat(buffers);
+        //   const work = XLSX.read(buffer, {
+        //     type: 'buffer',
+        //   }).Sheets;
+        //   console.log(work);
+        //   setFile(work.Sheet1);
+        //   setCsvFile(XLSX.utils.sheet_to_csv(work.Sheet1));
+        //   setLoading(false);
+        //   message.success(`${info.file.name} carregado com sucesso.`);
+        //   gerarTabela(work.Sheet1);
+        //   gerarSelecaoDeColunas(work.Sheet1);
+        // });
       } else if (status === 'error') {
         message.error(`não foi possivel carregar o arquivo ${info.file.name}.`);
       } else if (status === 'removed') {
         setFile({});
-        setCsvFile('');
+        setFileBody([]);
+        setFileHeader([]);
         setLoading(false);
         setShowTable(false);
         setShowFilters(false);
@@ -80,123 +125,77 @@ const UploadPage: React.FC = () => {
     maxCount: 1,
   };
 
-  const gerarSelecaoDeColunas = (_file: any) => {
+  const gerarSelecaoDeColunas = (_header: any) => {
     setLoading(true);
-    const json: any = XLSX.utils.sheet_to_json(_file, {
-      header: 'A',
-    });
-    const columnsJson = json[0];
-    const array = [];
-    for (let prop in columnsJson) {
+    const array: any = [];
+    _header.map((item: any) => {
       array.push(
-        <Option key={prop} value={prop}>
-          {columnsJson[prop]}
+        <Option key={item} value={item}>
+          {item}
         </Option>
       );
-    }
+    });
     setSelectChildren(array);
     setLoading(false);
   };
 
-  const gerarTabela = (_file: any) => {
+  const gerarTabela = (_header: any, _body: any) => {
+    console.log('entrou');
     setLoading(true);
-    const json: any = XLSX.utils.sheet_to_json(_file, {
-      header: 'A',
-    });
-    const columnsJson = json[0];
-    json.shift();
-    setDataSource(json);
-    let columns = [];
-    for (let prop in columnsJson) {
+    let columns: any = [];
+    _header.map((item: any) => {
       columns.push({
-        title: columnsJson[prop],
-        dataIndex: prop,
-        key: prop,
+        title: item,
+        dataIndex: item,
+        key: item,
       });
-    }
+    });
     setColumnsTable(columns);
+    setDataSource(_body);
     setLoading(false);
-  };
-
-  const gerarCsv = () => {
-    setLoading(true);
-    let hiddenElement = document.createElement('a');
-    hiddenElement.href =
-      'data:text/csv;charset=utf-8,' + encodeURI(XLSX.utils.sheet_to_csv(file));
-    hiddenElement.target = '_blank';
-
-    hiddenElement.download = 'gerador-sus.csv';
-    hiddenElement.click();
-    setLoading(false);
-  };
-
-  const gerarJSON = () => {
-    let hiddenElement = document.createElement('a');
-    let json: string = JSON.stringify(XLSX.utils.sheet_to_json(file));
-    hiddenElement.href = 'data:text/json;charset=utf-8,' + encodeURI(json);
-    hiddenElement.target = '_blank';
-
-    hiddenElement.download = 'gerador-sus.json';
-    hiddenElement.click();
   };
 
   const onChangeSelect = (value: any) => {
     setColumnsForCSV(value);
-
-    // console.log(value);
-    // const json: any[] = XLSX.utils.sheet_to_json(file, {
-    //   header: 'A',
-    // });
-    // json.shift();
-    // json.map((item) => {
-    //   let newItem: any = {};
-    //   for (let prop of value) {
-    //     newItem[prop] = item[prop];
-    //   }
-    //   console.log(newItem);
-    // });
   };
 
   const generateFiltredTable = () => {
     setFiltredLoading(true);
-    const json: any[] = XLSX.utils.sheet_to_json(file, {
-      header: 'A',
+    let columns: any = [];
+    columnsForCSV.map((item) => {
+      columns.push({ title: item, dataIndex: item, key: item });
     });
-    const columnsJson = json[0];
-    json.shift();
-
-    let columns = [];
-    for (let prop in columnsJson) {
-      const filtred = columnsForCSV.filter((item) => prop === item);
-      if (filtred.length > 0) {
-        columns.push({
-          title: columnsJson[prop],
-          dataIndex: prop,
-          key: prop,
-        });
-      }
-    }
     setColumnsTableFiltred(columns);
     setFiltredLoading(false);
   };
 
-  const generateFiltredCSV = () => {
-    const json: any[] = XLSX.utils.sheet_to_json(file, {
-      header: 'A',
-    });
-    const columnsJson = json[0];
-    json.shift();
-
+  const gerarCsv = () => {
+    setLoading(true);
     let header: any = {};
-    for (let prop in columnsJson) {
-      let filtered = columnsForCSV.filter((item) => prop === item);
+    fileHeader.map((item) => {
+      header[item] = item;
+    });
+    let body: any = [];
+    body = fileBody.map((item) => {
+      delete item['@deleted'];
+      delete item['@sequenceNumber'];
+      return item;
+    });
+    csv.exportCSVFile(header, body, 'gerador-sus');
+    setLoading(false);
+  };
+
+  const generateFiltredCSV = () => {
+    let header: any = {};
+
+    fileHeader.map((item) => {
+      let filtered = columnsForCSV.filter((column) => column === item);
       if (filtered.length > 0) {
-        header[prop] = columnsJson[prop];
+        header[item] = item;
       }
-    }
-    // console.log(header, json, columnsForCSV);
-    let itens = [];
-    let rows = json.map((item) => {
+    });
+
+    let rows = fileBody.map((item) => {
       let obj: any = {};
       for (let prop in header) {
         obj[prop] = item[prop];
@@ -231,7 +230,7 @@ const UploadPage: React.FC = () => {
             DBC.
           </p>
         </Dragger>
-        {csvFile !== '' ? (
+        {fileBody.length > 0 ? (
           <ButtonContainer bordered={true} title="Opções">
             <Button
               type="default"
